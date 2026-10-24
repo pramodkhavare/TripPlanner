@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+output/*
+!output/.gitkeep
+.ipynb_checkpoints/
+*.egg-info/
+env/
+venv/

@@ -36,7 +36,9 @@ files = [
     "backend.py" ,
     f"templates/index.html" ,
     f"static/script.js",
-    f"static/style.css"
+    f"static/style.css",
+    f"Dockerfile" ,
+    f".dockerignore"
 
 ]
 
