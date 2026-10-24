@@ -449,13 +449,5 @@ def search_flights(query: str, limit: int = 10) -> str:
 
 
 if __name__ == "__main__":
-    # for q in [
-    #     "flights from Pune to Delhi",
-    #     "Plan a 7 days Japan trip from Bangladesh",
-    #     "PNQ to DEL",
-    #     "flights to Goa",
-    # ]:
-    #     print(q, "->", parse_route(q))
-
     if __name__ == "__main__":
         print(search_flights("flights from Pune to Delhi", limit=3))
