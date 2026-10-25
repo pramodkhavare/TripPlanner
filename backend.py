@@ -6,7 +6,7 @@ import uuid
 import operator
 import psycopg
 from psycopg.rows import dict_row
-
+import asyncio
 from langgraph.graph import StateGraph ,START ,END
 from langgraph.checkpoint.postgres import PostgresSaver
 
@@ -14,7 +14,18 @@ from langgraph.checkpoint.postgres import PostgresSaver
 from langchain.messages import HumanMessage ,ToolMessage ,AIMessage ,SystemMessage
 from langchain_core.messages import AnyMessage
 from langchain_groq import ChatGroq
-from src.Travel_Planner.tools import tavily_tool ,flight_tool
+# from src.Travel_Planner.tools import tavily_tool
+# from src.Travel_Planner.tools import flight_tool
+
+# from mcp_client_test import tavily_mcp_search
+from mcp_cleint import avialtion_mcp_call ,tavily_mcp_search
+
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+workflow = None
+_pool = None
 
 
 load_dotenv()
@@ -70,27 +81,38 @@ class TravelState(TypedDict):
 
 
 
+# async def flight_node(state: TravelState) -> dict:
+#     query = state["user_query"]
+#     # If search_flights is blocking (requests, etc.), run it in a thread
+#     flight_results = await asyncio.to_thread(
+#         flight_tool.search_flights, query=query
+#     )
+#     return {
+#         "flight_results": flight_results,
+#         "messages": [AIMessage(content="Flight results are fetched")],
+#         "llm_calls": state.get("llm_calls", 0) + 1,
+#     }
 
-
-def flight_node(state:TravelState)->dict:
-    query = state['user_query']
-    flight_results = flight_tool.search_flights(query=query )
-
+async def flight_node(state: TravelState) -> dict:
+    query = state["user_query"]
+    # If search_flights is blocking (requests, etc.), run it in a thread
+    flight_results = await asyncio.(
+        flight_tool.search_flights, query=query
+    )
     return {
-        "flight_results" : flight_results ,
-        "messages" : [
-            AIMessage(content="Flight results are fetched")
-        ],
-        "llm_calls" : state.get('llm_calls' ,0) +1
+        "flight_results": flight_results,
+        "messages": [AIMessage(content="Flight results are fetched")],
+        "llm_calls": state.get("llm_calls", 0) + 1,
     }
 
 
 
-def hotel_node(state:TravelState) ->dict:
+async def hotel_node(state:TravelState) ->dict:
     query = state['user_query']
-    hotel_results = tavily_tool._tavily_search(query=query)
+    # hotel_results = tavily_tool._tavily_search(query=query)
 
-
+    hotel_results = await (tavily_mcp_search(query=query))
+    
     return {
             "hotel_results" : hotel_results ,
             "messages" : [
@@ -104,7 +126,7 @@ def hotel_node(state:TravelState) ->dict:
 
 from langchain.messages import HumanMessage, SystemMessage
 
-def itinerary_node(state: TravelState) -> dict:
+async def itinerary_node(state: TravelState) -> dict:
     prompt = f"""
 You are an expert travel planner. Build a practical itinerary
 using the following information.
@@ -132,7 +154,7 @@ Do not invent flight prices, hotel prices, or booking details
 that are not present in the provided data.
 """
 
-    itinerary_results = llm.invoke([
+    itinerary_results = await llm.ainvoke([
         SystemMessage(
             content="You are an expert travel planner."
         ),
@@ -148,7 +170,7 @@ that are not present in the provided data.
 
 
 
-def final_node(state: TravelState) -> dict:
+async def final_node(state: TravelState) -> dict:
     prompt = f"""
 You are an expert travel planning assistant.
 Create a complete, practical final travel plan using the information below.
@@ -196,7 +218,7 @@ Important instructions:
 - Make budget estimates only when sufficient information is available.
 """
 
-    final_response_results = llm.invoke([
+    final_response_results = await llm.ainvoke([
         SystemMessage(
             content="You are a professional AI travel planning assistant."
         ),
@@ -232,30 +254,60 @@ graph.add_edge('final_node' ,END)
 
 
 
-##Postgree checkpointer 
+##Postgree checkpointer postgree is synch function wo we have to make async and use 
+# DATBASE_URL = get_database_url()
 
-DATBASE_URL = get_database_url()
-
-_conn = psycopg.connect(
-    DATBASE_URL ,
-    autocommit=True ,
-    row_factory=dict_row
-)
-
-
-checkpointer = PostgresSaver(conn=_conn)
-checkpointer.setup()
+# _conn = psycopg.connect(
+#     DATBASE_URL ,
+#     autocommit=True ,
+#     row_factory=dict_row
+# )
+# checkpointer = PostgresSaver(conn=_conn)
+# checkpointer.setup()
+# workflow = graph.compile(checkpointer=checkpointer)
 
 
-workflow = graph.compile(checkpointer=checkpointer)
 
+async def get_workflow():
+    global workflow, _pool
+    if workflow is not None:
+        return workflow
+
+    _pool = AsyncConnectionPool(
+        conninfo=get_database_url(),
+        max_size=10,
+        open=False,
+        kwargs={
+            "autocommit": True,       # required by the checkpointer
+            "prepare_threshold": 0,   # avoids prepared-statement issues (e.g. Neon/pgbouncer)
+            "row_factory": dict_row,  # required by the checkpointer
+        },
+    )
+    await _pool.open()
+
+    checkpointer = AsyncPostgresSaver(_pool)
+    await checkpointer.setup()        # creates tables (idempotent)
+
+    workflow = graph.compile(checkpointer=checkpointer)
+    return workflow
+
+
+async def close_workflow():
+    global _pool, workflow
+    if _pool:
+        await _pool.close()
+    _pool, workflow = None, None
 
 
 
 
 ##FINAL caling function
 
-def run_travel_agent(user_input:str ,thread_id : str | None=None):
+async def run_travel_agent(user_input:str ,thread_id : str | None=None):
+
+    wf = await get_workflow()
+
+
     if not thread_id:
         thread_id = f"user_{uuid.uuid4().hex}"
 
@@ -280,8 +332,9 @@ def run_travel_agent(user_input:str ,thread_id : str | None=None):
     }
 
     # results = workflow.invoke(input=input ,config=config)[-1].content
-    final_state = workflow.invoke(input, config=config)
-    answer = final_state["messages"][-1].content
+    final_state = await wf.ainvoke(input, config=config)
+    # answer = final_state["messages"][-1].content
+    answer = final_state["final_response"]
 
     return {
         'thread_id' : thread_id,

@@ -1,36 +1,7 @@
-# from src.Travel_Planner.tools.tavily_tool import _tavily_search
-# from backend import run_travel_agent
-
-
-
-
-
-# user_input = input('Enter travel request: ')
-
-
-# res = run_travel_agent(user_input= user_input )
-
-
-# print('Final_responce' ,res)
-
-# print("####################################################")
-
-# print('ANS' , res['answer'])
-
-
-
-# # Plan 7 days nepal trip from India tinclude flights ,hotels under 20000
-
-
-
-
-
-
 from pathlib import Path
 import traceback 
 import uvicorn
 from typing import Optional
-
 
 from fastapi import FastAPI ,Request
 from fastapi.responses import HTMLResponse ,JSONResponse
@@ -40,6 +11,8 @@ from pydantic import BaseModel
 
 from backend import run_travel_agent
 
+# import nest_asyncio
+# nest_asyncio.apply()
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -102,11 +75,11 @@ async def travel_planner(request_data: TravelRequest):
                 status_code=400 ,
                 content={
                     "success" :False ,
-                    "erro" : "Message cannot be empty"
+                    "error" : "Message cannot be empty"
                 }
             )
 
-        results = run_travel_agent(
+        results = await run_travel_agent(
             user_input=user_message ,
             thread_id= request_data.thread_id
         )
@@ -130,7 +103,7 @@ async def travel_planner(request_data: TravelRequest):
                         status_code=400 ,
                         content={
                             "success" :False ,
-                            "erro" : str(e)
+                            "error" : str(e)
                         }
                     )
 
